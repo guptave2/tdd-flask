@@ -3,7 +3,7 @@ import pytest
 import json
 from pathlib import Path
 
-from project.app import app, init_db
+from project.app import app, db
 
 TEST_DB = "test.db"
 
@@ -13,10 +13,12 @@ def client():
     BASE_DIR = Path(__file__).resolve().parent.parent
     app.config["TESTING"] = True
     app.config["DATABASE"] = BASE_DIR.joinpath(TEST_DB)
+    app.config["SQLALCHEMY_DATABASE_URI"] = f"sqlite:///{BASE_DIR.joinpath(TEST_DB)}"
 
-    init_db() # setup
-    yield app.test_client() # tests run here
-    init_db() # teardown
+    with app.app_context():
+        db.create_all()  # setup
+        yield app.test_client()  # tests run here
+        db.drop_all()  # teardown
 
 
 def login(client, username, password):
@@ -76,6 +78,50 @@ def test_messages(client):
 
 def test_delete_message(client):
     """Ensure the messages are being deleted"""
-    rv = client.get('/delete/1')
+    rv = client.get("/delete/1")
+    data = json.loads(rv.data)
+    assert data["status"] == 0
+    login(client, app.config["USERNAME"], app.config["PASSWORD"])
+    rv = client.get("/delete/1")
     data = json.loads(rv.data)
     assert data["status"] == 1
+
+#Using GPT to get a test for search
+
+def test_search_functionality(client):
+    """Test search functionality with different query inputs."""
+    
+    # Log in and add some test posts
+    login(client, app.config["USERNAME"], app.config["PASSWORD"])
+    client.post(
+        "/add",
+        data=dict(title="Post1", text="Test1"),
+        follow_redirects=True,
+    )
+    client.post(
+        "/add",
+        data=dict(title="Post2", text="Test2"),
+        follow_redirects=True,
+    )
+
+    
+    # 1. Test search for "1"
+    response = client.get("/search/?query=1")
+    assert b"Post1" in response.data
+    assert b"Test1" in response.data
+    assert b"Post2" not in response.data
+
+    # 2. Test search for "Post"
+    response = client.get("/search/?query=Post")
+    assert b"Post1" in response.data
+    assert b"Post2" in response.data
+
+
+    # 4. Test search for a query not added 
+    response = client.get("/search/?query=error")
+    assert b"Post1" not in response.data
+    assert b"Post2" not in response.data
+    # Ensure the page still loads without any results
+    assert b"No results found." not in response.data  
+
+
